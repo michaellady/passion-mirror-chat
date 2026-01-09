@@ -41,7 +41,7 @@ serve(async (req) => {
     console.log(`Starting Nimrobo session for user ${user.id} with niche: ${niche}`);
 
     // Create Nimrobo session
-    const nimroboResponse = await fetch('https://api.nimrobo.com/v1/sessions', {
+    const nimroboResponse = await fetch('https://api.nimroboai.com/v1/sessions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${NIMROBO_API_KEY}`,
