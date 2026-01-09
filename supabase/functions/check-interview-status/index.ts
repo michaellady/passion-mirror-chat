@@ -12,6 +12,18 @@ function tokenFromLink(nimroboLink: string | null): string | null {
   return match?.[1] ?? null;
 }
 
+// List all instant voice links to find the one we created and check its status
+async function listInstantVoiceLinks(baseUrl: string, apiKey: string) {
+  const url = `${baseUrl}/api/v1/instant-voice-links`;
+  return fetch(url, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+  });
+}
+
 async function fetchStatus(baseUrl: string, apiKey: string, sessionId: string) {
   const url = `${baseUrl}/api/v1/session/status?sessionId=${encodeURIComponent(sessionId)}&type=instant`;
   return fetch(url, {
@@ -93,47 +105,122 @@ serve(async (req) => {
     }
 
     const baseUrl = 'https://app.nimroboai.com';
-
-    // We currently store the *link id* in nimrobo_session_id.
-    // Some Nimrobo endpoints treat the *token* as the sessionId, so we try both.
     const linkToken = tokenFromLink(session.nimrobo_link);
-    const candidateIds = [session.nimrobo_session_id, linkToken].filter(Boolean) as string[];
+    const storedLinkId = session.nimrobo_session_id;
 
-    console.log(`Checking Nimrobo identifiers for user ${user.id}:`, candidateIds);
+    console.log(`Checking interview for user ${user.id}, linkId=${storedLinkId}, token=${linkToken}`);
+
+    // Step 1: List all instant voice links to find the matching one
+    const linksResponse = await listInstantVoiceLinks(baseUrl, NIMROBO_API_KEY);
+    
+    if (!linksResponse.ok) {
+      const errorText = await linksResponse.text();
+      console.error('Failed to list links:', linksResponse.status, errorText);
+      throw new Error(`Failed to list Nimrobo links: ${linksResponse.status}`);
+    }
+
+    const linksData = await linksResponse.json();
+    console.log(`Found ${linksData.links?.length || 0} instant voice links`);
+
+    // Find the matching link by id or token
+    const matchingLink = linksData.links?.find((link: any) => 
+      link.id === storedLinkId || link.token === linkToken || link.token === storedLinkId
+    );
+
+    if (!matchingLink) {
+      console.log('No matching link found in Nimrobo');
+      return new Response(JSON.stringify({
+        status: 'pending',
+        message: 'Link not found - it may have expired',
+        debug: { storedLinkId, linkToken, availableLinks: linksData.links?.length || 0 }
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    console.log('Matching link found:', JSON.stringify(matchingLink));
+
+    // Check link status: "active" = not started, "used" = session started/completed
+    const linkStatus = matchingLink.status;
+    
+    if (linkStatus === 'active') {
+      // Link hasn't been used yet - user hasn't started the interview
+      return new Response(JSON.stringify({
+        status: 'pending',
+        message: 'Waiting for you to start the interview',
+        linkStatus: 'active',
+        debug: { linkId: matchingLink.id, token: matchingLink.token }
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (linkStatus === 'expired' || linkStatus === 'cancelled') {
+      return new Response(JSON.stringify({
+        status: 'failed',
+        message: `Link has ${linkStatus}`,
+        linkStatus,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Link status is "used" - a session was started
+    // Now we need to find the actual sessionId. Try using the link id as sessionId
+    // The sessionId for instant links is often the same as the link id
+    const candidateSessionIds = [
+      matchingLink.id, 
+      matchingLink.token,
+      matchingLink.sessionId, // in case it's returned
+      matchingLink.lastSessionId, // in case it's returned
+    ].filter(Boolean);
+
+    console.log('Link is used, trying session IDs:', candidateSessionIds);
 
     let statusData: any | null = null;
     let usedSessionId: string | null = null;
 
-    for (const candidate of candidateIds) {
+    for (const candidate of candidateSessionIds) {
       const statusResponse = await fetchStatus(baseUrl, NIMROBO_API_KEY, candidate);
 
       if (statusResponse.status === 404) {
-        console.log(`Status 404 for candidate ${candidate}`);
+        console.log(`Status 404 for sessionId candidate: ${candidate}`);
         continue;
       }
 
       if (!statusResponse.ok) {
         const errorText = await statusResponse.text();
         console.error('Nimrobo status API error:', statusResponse.status, errorText);
-        throw new Error(`Nimrobo API error: ${statusResponse.status}`);
+        continue;
       }
 
       statusData = await statusResponse.json();
       usedSessionId = candidate;
+      console.log(`Found session status with id ${candidate}:`, JSON.stringify(statusData));
       break;
     }
 
-    if (!statusData || !usedSessionId) {
+    // If we still can't find status but link is "used", report as active (in progress)
+    if (!statusData) {
+      console.log('Link is used but session status not found yet - interview may be in progress');
+      
+      // Update our session to active since the link was used
+      await supabase
+        .from('sessions')
+        .update({ status: 'active' })
+        .eq('id', session.id);
+
       return new Response(JSON.stringify({
-        status: 'pending',
-        message: 'Waiting for interview to start',
+        status: 'active',
+        message: 'Interview in progress...',
+        linkStatus: 'used',
+        debug: { triedSessionIds: candidateSessionIds }
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    console.log('Nimrobo status data:', JSON.stringify(statusData));
-
+    // We have status data - check if completed
     const rawStatus = statusData.status;
     const isCompleted = Boolean(statusData.completedAt) || rawStatus === 'completed' || rawStatus === 'ended' || rawStatus === 'finished';
     const isActive = rawStatus === 'in_progress' || rawStatus === 'active' || rawStatus === 'started';
@@ -146,10 +233,11 @@ serve(async (req) => {
       newStatus = 'completed';
 
       console.log(`Session completed (id=${usedSessionId}), fetching transcript...`);
-      const transcriptResponse = await fetchTranscript(baseUrl, NIMROBO_API_KEY, usedSessionId);
+      const transcriptResponse = await fetchTranscript(baseUrl, NIMROBO_API_KEY, usedSessionId!);
 
       if (transcriptResponse.ok) {
         const transcriptData = await transcriptResponse.json();
+        console.log('Transcript data received:', JSON.stringify(transcriptData).slice(0, 500));
         transcript = normalizeTranscript(transcriptData?.transcript);
       } else {
         console.error('Transcript fetch failed:', transcriptResponse.status, await transcriptResponse.text());
@@ -159,7 +247,7 @@ serve(async (req) => {
     } else if (isFailed) {
       newStatus = 'failed';
     } else {
-      newStatus = 'pending';
+      newStatus = 'active'; // Default to active if link is used
     }
 
     const updateData: Record<string, unknown> = { status: newStatus };
@@ -177,8 +265,9 @@ serve(async (req) => {
       status: newStatus,
       transcript,
       session_id: session.id,
-      nimrobo_session_id: session.nimrobo_session_id,
-      nimrobo_used_session_id: usedSessionId,
+      nimrobo_link_id: matchingLink.id,
+      nimrobo_session_id: usedSessionId,
+      linkStatus,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
