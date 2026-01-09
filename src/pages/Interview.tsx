@@ -152,11 +152,22 @@ const Interview = () => {
 
       if (data?.session_url) {
         setSessionUrl(data.session_url);
-        window.open(data.session_url, '_blank');
         setIsPolling(true);
+        
+        // Move to waiting stage first, then let the user click to open
+        // This is more reliable across browsers (Brave, Safari, etc.)
+        setStage('waiting');
+        
+        // Try to open automatically, but don't rely on it
+        // Some browsers block window.open after async calls
+        const newWindow = window.open(data.session_url, '_blank', 'noopener,noreferrer');
+        if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+          // Popup was blocked - user will need to click the button
+          toast.info('Click "Open Interview" to start your session');
+        }
+      } else {
+        setStage('waiting');
       }
-      
-      setStage('waiting');
     } catch (error) {
       console.error('Failed to start interview:', error);
       toast.error('Failed to start interview. Using demo mode.');
