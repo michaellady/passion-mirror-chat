@@ -60,9 +60,9 @@ serve(async (req) => {
 
     console.log(`Checking Nimrobo session ${session.nimrobo_session_id} for user ${user.id}`);
 
-    // Check session status with Nimrobo API
-    const nimroboResponse = await fetch(
-      `https://app.nimroboai.com/api/v1/sessions/${session.nimrobo_session_id}`,
+    // Check session status with Nimrobo API - using correct endpoint format
+    const statusResponse = await fetch(
+      `https://app.nimroboai.com/api/v1/session/status?sessionId=${session.nimrobo_session_id}&type=instant`,
       {
         method: 'GET',
         headers: {
@@ -73,7 +73,7 @@ serve(async (req) => {
     );
 
     // If 404, session may not have started yet
-    if (nimroboResponse.status === 404) {
+    if (statusResponse.status === 404) {
       console.log('Session not found in Nimrobo - user may not have started yet');
       return new Response(JSON.stringify({
         status: 'pending',
@@ -83,26 +83,63 @@ serve(async (req) => {
       });
     }
 
-    if (!nimroboResponse.ok) {
-      const errorText = await nimroboResponse.text();
-      console.error('Nimrobo API error:', nimroboResponse.status, errorText);
-      throw new Error(`Nimrobo API error: ${nimroboResponse.status}`);
+    if (!statusResponse.ok) {
+      const errorText = await statusResponse.text();
+      console.error('Nimrobo status API error:', statusResponse.status, errorText);
+      throw new Error(`Nimrobo API error: ${statusResponse.status}`);
     }
 
-    const nimroboData = await nimroboResponse.json();
-    console.log('Nimrobo session data:', JSON.stringify(nimroboData));
+    const statusData = await statusResponse.json();
+    console.log('Nimrobo status data:', JSON.stringify(statusData));
 
-    // Extract status and transcript
-    const nimroboStatus = nimroboData.status || nimroboData.state || 'unknown';
-    const transcript = nimroboData.transcript || nimroboData.transcription || null;
-    
-    // Map Nimrobo status to our status
+    // Check if session has completed (completedAt is set)
+    const isCompleted = statusData.completedAt || statusData.status === 'completed' || statusData.status === 'ended';
+    const isActive = statusData.status === 'in_progress' || statusData.status === 'active' || statusData.status === 'started';
+    const isFailed = statusData.status === 'failed' || statusData.status === 'error';
+
     let newStatus: string;
-    if (nimroboStatus === 'completed' || nimroboStatus === 'finished' || nimroboStatus === 'ended') {
+    let transcript: string | null = null;
+
+    if (isCompleted) {
       newStatus = 'completed';
-    } else if (nimroboStatus === 'in_progress' || nimroboStatus === 'active' || nimroboStatus === 'started') {
+      
+      // Fetch transcript from separate endpoint
+      console.log('Session completed, fetching transcript...');
+      const transcriptResponse = await fetch(
+        `https://app.nimroboai.com/api/v1/session/transcript?sessionId=${session.nimrobo_session_id}&type=instant`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${NIMROBO_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      if (transcriptResponse.ok) {
+        const transcriptData = await transcriptResponse.json();
+        console.log('Transcript data received:', JSON.stringify(transcriptData).slice(0, 500));
+        
+        // Parse the transcript - it may be a JSON object with conversation entries
+        if (transcriptData.transcript) {
+          if (typeof transcriptData.transcript === 'string') {
+            transcript = transcriptData.transcript;
+          } else if (Array.isArray(transcriptData.transcript)) {
+            // Convert conversation array to readable transcript
+            transcript = transcriptData.transcript
+              .filter((entry: { role?: string; content?: string }) => entry.role === 'user' || entry.role === 'assistant')
+              .map((entry: { role?: string; content?: string }) => `${entry.role}: ${entry.content}`)
+              .join('\n');
+          } else {
+            transcript = JSON.stringify(transcriptData.transcript);
+          }
+        }
+      } else {
+        console.error('Failed to fetch transcript:', await transcriptResponse.text());
+      }
+    } else if (isActive) {
       newStatus = 'active';
-    } else if (nimroboStatus === 'failed' || nimroboStatus === 'error') {
+    } else if (isFailed) {
       newStatus = 'failed';
     } else {
       newStatus = 'pending';
