@@ -61,16 +61,21 @@ export function InterviewWaiting({ voiceLink, onDemoComplete, pollingStatus, isP
       )}
 
       {voiceLink && (
-        <Button
-          variant="outline"
-          asChild
-          className="mb-6"
-        >
-          <a href={voiceLink} target="_blank" rel="noopener noreferrer">
-            <ExternalLink className="w-4 h-4 mr-2" />
-            Reopen Interview Tab
-          </a>
-        </Button>
+        <div className="flex flex-col gap-3 mb-6">
+          <Button
+            asChild
+            size="lg"
+            className="text-base"
+          >
+            <a href={voiceLink} target="_blank" rel="noopener noreferrer">
+              <ExternalLink className="w-5 h-5 mr-2" />
+              Open Interview
+            </a>
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            Click to open your voice interview in a new tab
+          </p>
+        </div>
       )}
 
       {/* Demo mode button */}
