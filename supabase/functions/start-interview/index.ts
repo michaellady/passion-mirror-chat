@@ -76,17 +76,29 @@ Keep the interview to about 3-5 minutes.`,
     const nimroboData = await nimroboResponse.json();
     console.log('Nimrobo session created:', nimroboData);
 
-    // Extract the voice link URL from response
-    const voiceLink = nimroboData.voiceLinks?.[0];
-    if (!voiceLink) {
+    // Extract the voice link from response
+    const linkObj = nimroboData.links?.[0] ?? nimroboData.voiceLinks?.[0] ?? nimroboData.voice_links?.[0];
+    if (!linkObj) {
       throw new Error('No voice link returned from Nimrobo');
     }
+
+    const sessionUrl: string | null =
+      linkObj.url ??
+      linkObj.link ??
+      (linkObj.token ? `https://app.nimroboai.com/talk/${linkObj.token}` : null);
+
+    if (!sessionUrl) {
+      console.error('Nimrobo link object missing URL/token:', linkObj);
+      throw new Error('Nimrobo response missing a usable session URL');
+    }
+
+    const sessionId: string = linkObj.id ?? linkObj.token;
 
     // Save session to database
     const { error: dbError } = await supabase.from('sessions').insert({
       user_id: user.id,
-      nimrobo_session_id: voiceLink.id,
-      nimrobo_link: voiceLink.url,
+      nimrobo_session_id: sessionId,
+      nimrobo_link: sessionUrl,
       status: 'pending',
     });
 
@@ -96,8 +108,8 @@ Keep the interview to about 3-5 minutes.`,
     }
 
     return new Response(JSON.stringify({
-      session_id: voiceLink.id,
-      session_url: voiceLink.url,
+      session_id: sessionId,
+      session_url: sessionUrl,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
