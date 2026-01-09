@@ -34,7 +34,7 @@ const Interview = () => {
     // Save traits to database
     await supabase.from('traits').upsert([{
       user_id: userId,
-      big5: traits.big5,
+      big5: JSON.parse(JSON.stringify(traits.big5)),
       passion_score: traits.passionScore,
       archetype: traits.archetype,
       tags: traits.tags,
