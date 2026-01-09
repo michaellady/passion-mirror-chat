@@ -85,7 +85,7 @@ Keep the interview to about 3-5 minutes.`,
     const sessionUrl: string | null =
       linkObj.url ??
       linkObj.link ??
-      (linkObj.token ? `https://talk.nimroboai.com/${linkObj.token}` : null);
+      (linkObj.token ? `https://app.nimroboai.com/link/${linkObj.token}` : null);
 
     if (!sessionUrl) {
       console.error('Nimrobo link object missing URL/token:', linkObj);
