@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { FloatingOrbs } from '@/components/ui/FloatingOrbs';
 import { InterviewStart } from '@/components/interview/InterviewStart';
@@ -8,6 +8,8 @@ import { analyzeTranscript } from '@/lib/analysis';
 import { assignUserToClusters } from '@/lib/clustering';
 import { toast } from 'sonner';
 
+const POLL_INTERVAL = 5000; // 5 seconds
+
 const Interview = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -15,6 +17,8 @@ const Interview = () => {
   const [stage, setStage] = useState<'start' | 'waiting'>('start');
   const [userId, setUserId] = useState<string | null>(null);
   const [sessionUrl, setSessionUrl] = useState<string | null>(null);
+  const [isPolling, setIsPolling] = useState(false);
+  const [pollingStatus, setPollingStatus] = useState<string>('');
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -23,41 +27,11 @@ const Interview = () => {
     });
   }, [navigate, niche]);
 
-  const handleStart = async () => {
+  const processTranscript = useCallback(async (transcript: string) => {
     if (!userId) return;
     
-    try {
-      // Call edge function to start Nimrobo session
-      const { data, error } = await supabase.functions.invoke('start-interview', {
-        body: { niche }
-      });
-
-      if (error) throw error;
-
-      if (data?.session_url) {
-        setSessionUrl(data.session_url);
-        // Open Nimrobo session in new tab
-        window.open(data.session_url, '_blank');
-      }
-      
-      setStage('waiting');
-    } catch (error) {
-      console.error('Failed to start interview:', error);
-      toast.error('Failed to start interview. Using demo mode.');
-      // Fallback to demo mode
-      setStage('waiting');
-    }
-  };
-
-  const handleComplete = async () => {
-    if (!userId) return;
+    const traits = analyzeTranscript(transcript, niche);
     
-    // Demo: Generate sample transcript and analyze
-    const demoTranscript = `I absolutely love ${niche}! It's fascinating how deep you can go. I remember when I first discovered this passion - it was incredible. I've been exploring and building my knowledge ever since. The community is amazing and I love sharing with others who understand.`;
-    
-    const traits = analyzeTranscript(demoTranscript, niche);
-    
-    // Save traits to database
     await supabase.from('traits').upsert([{
       user_id: userId,
       big5: JSON.parse(JSON.stringify(traits.big5)),
@@ -67,10 +41,101 @@ const Interview = () => {
       deep_hooks: traits.deepHooks,
     }], { onConflict: 'user_id' });
 
-    // Assign to clusters
     await assignUserToClusters(userId, traits, niche);
     
+    // Update session status to analyzed
+    await supabase
+      .from('sessions')
+      .update({ status: 'analyzed' })
+      .eq('user_id', userId)
+      .eq('status', 'completed');
+    
     navigate('/results');
+  }, [userId, niche, navigate]);
+
+  const checkInterviewStatus = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke('check-interview-status');
+
+      if (error) {
+        console.error('Status check error:', error);
+        return null;
+      }
+
+      return data;
+    } catch (err) {
+      console.error('Failed to check status:', err);
+      return null;
+    }
+  }, []);
+
+  // Polling effect
+  useEffect(() => {
+    if (!isPolling || stage !== 'waiting') return;
+
+    const pollForCompletion = async () => {
+      const result = await checkInterviewStatus();
+      
+      if (!result) {
+        setPollingStatus('Checking...');
+        return;
+      }
+
+      if (result.status === 'pending') {
+        setPollingStatus('Waiting for you to start the interview...');
+      } else if (result.status === 'active') {
+        setPollingStatus('Interview in progress...');
+      } else if (result.status === 'completed' && result.transcript) {
+        setPollingStatus('Interview complete! Analyzing your responses...');
+        setIsPolling(false);
+        toast.success('Interview completed! Processing your results...');
+        await processTranscript(result.transcript);
+      } else if (result.status === 'failed') {
+        setPollingStatus('Something went wrong. Please try again.');
+        setIsPolling(false);
+        toast.error('Interview session failed. Please try again.');
+      }
+    };
+
+    // Initial check
+    pollForCompletion();
+
+    // Set up interval
+    const intervalId = setInterval(pollForCompletion, POLL_INTERVAL);
+
+    return () => clearInterval(intervalId);
+  }, [isPolling, stage, checkInterviewStatus, processTranscript]);
+
+  const handleStart = async () => {
+    if (!userId) return;
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('start-interview', {
+        body: { niche }
+      });
+
+      if (error) throw error;
+
+      if (data?.session_url) {
+        setSessionUrl(data.session_url);
+        window.open(data.session_url, '_blank');
+        setIsPolling(true);
+      }
+      
+      setStage('waiting');
+    } catch (error) {
+      console.error('Failed to start interview:', error);
+      toast.error('Failed to start interview. Using demo mode.');
+      setStage('waiting');
+    }
+  };
+
+  const handleDemoComplete = async () => {
+    if (!userId) return;
+    
+    const demoTranscript = `I absolutely love ${niche}! It's fascinating how deep you can go. I remember when I first discovered this passion - it was incredible. I've been exploring and building my knowledge ever since. The community is amazing and I love sharing with others who understand. What really excites me is how there's always something new to learn. I've spent countless hours diving into the details, and every time I think I've seen it all, something surprises me. My favorite part is connecting with other enthusiasts who share this passion.`;
+    
+    await processTranscript(demoTranscript);
   };
 
   return (
@@ -80,8 +145,10 @@ const Interview = () => {
         {stage === 'start' && <InterviewStart niche={niche} onStart={handleStart} />}
         {stage === 'waiting' && (
           <InterviewWaiting 
-            onComplete={handleComplete} 
+            onDemoComplete={handleDemoComplete}
             voiceLink={sessionUrl || undefined}
+            pollingStatus={pollingStatus}
+            isPolling={isPolling}
           />
         )}
       </div>
