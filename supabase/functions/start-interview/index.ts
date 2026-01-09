@@ -40,44 +40,66 @@ serve(async (req) => {
     
     console.log(`Starting Nimrobo session for user ${user.id} with niche: ${niche}`);
 
-    // Create Nimrobo session
-    const nimroboResponse = await fetch('https://api.nimroboai.com/v1/sessions', {
+    // Create interview flow first
+    const flowResponse = await fetch('https://app.ribbon.ai/be-api/v1/interview-flows', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${NIMROBO_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        prompt: `You are a friendly interviewer helping discover someone's passion for "${niche}". 
-Ask open-ended questions about:
-- How they discovered this interest
-- What specifically excites them about it
-- Their favorite experiences or projects
-- Who inspires them in this space
-- What they'd love to explore next
-
+        name: `Passion Interview: ${niche}`,
+        system_prompt: `You are a friendly interviewer helping discover someone's passion for "${niche}". 
+Ask open-ended questions about how they discovered this interest, what specifically excites them about it, 
+their favorite experiences or projects, who inspires them in this space, and what they'd love to explore next.
 Keep it conversational, warm, and curious. Listen actively and ask follow-ups.
 The goal is to understand their personality traits and passion level.
 Keep the interview to about 3-5 minutes.`,
-        voice: 'alloy',
-        max_duration: 300, // 5 minutes
+        questions: [
+          `Tell me, how did you first discover your interest in ${niche}?`,
+          `What specifically excites you most about ${niche}?`,
+          `Can you share a favorite experience or project related to ${niche}?`,
+          `Who inspires you in this space?`,
+          `What would you love to explore next in ${niche}?`
+        ]
       }),
     });
 
-    if (!nimroboResponse.ok) {
-      const errorText = await nimroboResponse.text();
-      console.error('Nimrobo API error:', errorText);
-      throw new Error(`Nimrobo API error: ${nimroboResponse.status}`);
+    if (!flowResponse.ok) {
+      const errorText = await flowResponse.text();
+      console.error('Ribbon API flow error:', errorText);
+      throw new Error(`Ribbon API error: ${flowResponse.status}`);
     }
 
-    const nimroboData = await nimroboResponse.json();
-    console.log('Nimrobo session created:', nimroboData);
+    const flowData = await flowResponse.json();
+    console.log('Interview flow created:', flowData);
+
+    // Create a session from the flow
+    const sessionResponse = await fetch('https://app.ribbon.ai/be-api/v1/sessions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${NIMROBO_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        interview_flow_id: flowData.id,
+      }),
+    });
+
+    if (!sessionResponse.ok) {
+      const errorText = await sessionResponse.text();
+      console.error('Ribbon API session error:', errorText);
+      throw new Error(`Ribbon API error: ${sessionResponse.status}`);
+    }
+
+    const sessionData = await sessionResponse.json();
+    console.log('Session created:', sessionData);
 
     // Save session to database
     const { error: dbError } = await supabase.from('sessions').insert({
       user_id: user.id,
-      nimrobo_session_id: nimroboData.session_id,
-      nimrobo_link: nimroboData.session_url || nimroboData.link,
+      nimrobo_session_id: sessionData.id,
+      nimrobo_link: sessionData.session_url || sessionData.link || sessionData.url,
       status: 'pending',
     });
 
@@ -87,8 +109,8 @@ Keep the interview to about 3-5 minutes.`,
     }
 
     return new Response(JSON.stringify({
-      session_id: nimroboData.session_id,
-      session_url: nimroboData.session_url || nimroboData.link,
+      session_id: sessionData.id,
+      session_url: sessionData.session_url || sessionData.link || sessionData.url,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
