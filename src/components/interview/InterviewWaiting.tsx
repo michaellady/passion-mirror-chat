@@ -1,13 +1,15 @@
 import { motion } from 'framer-motion';
-import { Loader2, ExternalLink } from 'lucide-react';
+import { Loader2, ExternalLink, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface InterviewWaitingProps {
   voiceLink?: string;
-  onComplete: () => void;
+  onDemoComplete: () => void;
+  pollingStatus?: string;
+  isPolling?: boolean;
 }
 
-export function InterviewWaiting({ voiceLink, onComplete }: InterviewWaitingProps) {
+export function InterviewWaiting({ voiceLink, onDemoComplete, pollingStatus, isPolling }: InterviewWaitingProps) {
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -41,10 +43,22 @@ export function InterviewWaiting({ voiceLink, onComplete }: InterviewWaitingProp
         Take your time... we'll be here when you're done
       </h2>
 
-      <p className="text-muted-foreground mb-8">
+      <p className="text-muted-foreground mb-4">
         Your interview is happening in the other tab. When you're finished, we'll automatically
         process your conversation and reveal your passion profile.
       </p>
+
+      {/* Polling status indicator */}
+      {isPolling && pollingStatus && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center justify-center gap-2 text-sm text-primary mb-6"
+        >
+          <CheckCircle2 className="w-4 h-4" />
+          <span>{pollingStatus}</span>
+        </motion.div>
+      )}
 
       {voiceLink && (
         <Button
@@ -62,13 +76,13 @@ export function InterviewWaiting({ voiceLink, onComplete }: InterviewWaitingProp
       {/* Demo mode button */}
       <div className="border-t border-border/50 pt-6 mt-6">
         <p className="text-sm text-muted-foreground mb-3">
-          Demo mode: Skip to results with sample data
+          Don't have a microphone? Skip with sample data
         </p>
         <Button
           variant="secondary"
-          onClick={onComplete}
+          onClick={onDemoComplete}
         >
-          Complete Interview (Demo)
+          Skip with Demo Data
         </Button>
       </div>
     </motion.div>
