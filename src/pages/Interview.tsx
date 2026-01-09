@@ -6,6 +6,7 @@ import { InterviewWaiting } from '@/components/interview/InterviewWaiting';
 import { supabase } from '@/integrations/supabase/client';
 import { analyzeTranscript } from '@/lib/analysis';
 import { assignUserToClusters } from '@/lib/clustering';
+import { toast } from 'sonner';
 
 const Interview = () => {
   const [searchParams] = useSearchParams();
@@ -13,6 +14,7 @@ const Interview = () => {
   const niche = searchParams.get('niche') || 'your passion';
   const [stage, setStage] = useState<'start' | 'waiting'>('start');
   const [userId, setUserId] = useState<string | null>(null);
+  const [sessionUrl, setSessionUrl] = useState<string | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -21,7 +23,31 @@ const Interview = () => {
     });
   }, [navigate, niche]);
 
-  const handleStart = () => setStage('waiting');
+  const handleStart = async () => {
+    if (!userId) return;
+    
+    try {
+      // Call edge function to start Nimrobo session
+      const { data, error } = await supabase.functions.invoke('start-interview', {
+        body: { niche }
+      });
+
+      if (error) throw error;
+
+      if (data?.session_url) {
+        setSessionUrl(data.session_url);
+        // Open Nimrobo session in new tab
+        window.open(data.session_url, '_blank');
+      }
+      
+      setStage('waiting');
+    } catch (error) {
+      console.error('Failed to start interview:', error);
+      toast.error('Failed to start interview. Using demo mode.');
+      // Fallback to demo mode
+      setStage('waiting');
+    }
+  };
 
   const handleComplete = async () => {
     if (!userId) return;
@@ -52,7 +78,12 @@ const Interview = () => {
       <FloatingOrbs />
       <div className="relative z-10 w-full">
         {stage === 'start' && <InterviewStart niche={niche} onStart={handleStart} />}
-        {stage === 'waiting' && <InterviewWaiting onComplete={handleComplete} />}
+        {stage === 'waiting' && (
+          <InterviewWaiting 
+            onComplete={handleComplete} 
+            voiceLink={sessionUrl || undefined}
+          />
+        )}
       </div>
     </div>
   );
