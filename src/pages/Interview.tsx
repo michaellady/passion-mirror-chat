@@ -27,12 +27,36 @@ const Interview = () => {
     });
   }, [navigate, niche]);
 
-  const processTranscript = useCallback(async (transcript: string) => {
+  const processTranscript = useCallback(async (rawTranscript: string) => {
     if (!userId) return;
     
-    const traits = analyzeTranscript(transcript, niche);
+    // Parse the transcript - it might be JSON from Nimrobo
+    let textTranscript = rawTranscript;
+    try {
+      const parsed = JSON.parse(rawTranscript);
+      // Extract just the user messages from the conversation
+      if (parsed.messages && Array.isArray(parsed.messages)) {
+        textTranscript = parsed.messages
+          .filter((m: { role: string; content: string }) => m.role === 'user')
+          .map((m: { content: string }) => m.content)
+          .join(' ');
+      } else if (Array.isArray(parsed)) {
+        textTranscript = parsed
+          .filter((m: { role: string; content: string }) => m.role === 'user')
+          .map((m: { content: string }) => m.content)
+          .join(' ');
+      }
+    } catch {
+      // Not JSON, use as-is
+      console.log('Transcript is plain text');
+    }
     
-    await supabase.from('traits').upsert([{
+    console.log('Processing transcript:', textTranscript.slice(0, 200));
+    
+    const traits = analyzeTranscript(textTranscript, niche);
+    console.log('Analyzed traits:', traits);
+    
+    const { error: traitsError } = await supabase.from('traits').upsert([{
       user_id: userId,
       big5: JSON.parse(JSON.stringify(traits.big5)),
       passion_score: traits.passionScore,
@@ -41,7 +65,17 @@ const Interview = () => {
       deep_hooks: traits.deepHooks,
     }], { onConflict: 'user_id' });
 
-    await assignUserToClusters(userId, traits, niche);
+    if (traitsError) {
+      console.error('Failed to save traits:', traitsError);
+      toast.error('Failed to save results');
+      return;
+    }
+
+    try {
+      await assignUserToClusters(userId, traits, niche);
+    } catch (clusterError) {
+      console.error('Clustering error (non-fatal):', clusterError);
+    }
     
     // Update session status to analyzed
     await supabase
