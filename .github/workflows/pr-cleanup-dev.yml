@@ -1,0 +1,111 @@
+name: PR Cleanup Dev
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+env:
+  AWS_REGION: us-west-2
+  PR_NUMBER: ${{ github.event.pull_request.number }}
+
+jobs:
+  cleanup:
+    name: Cleanup PR Environment
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.6'
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: terraform/service
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=passion/service/pr-${{ env.PR_NUMBER }}/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ secrets.TF_LOCK_TABLE }}"
+
+      - name: Check if state exists
+        id: check-state
+        working-directory: terraform/service
+        run: |
+          # Try to list resources - if no state, this will be empty
+          RESOURCES=$(terraform state list 2>/dev/null || echo "")
+          if [ -z "$RESOURCES" ]; then
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "No terraform state found for PR-${{ env.PR_NUMBER }}"
+          else
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Found terraform resources for PR-${{ env.PR_NUMBER }}"
+          fi
+
+      - name: Empty S3 bucket before destroy
+        if: steps.check-state.outputs.exists == 'true'
+        working-directory: terraform/service
+        run: |
+          # Get bucket name from state
+          BUCKET=$(terraform output -raw s3_bucket_name 2>/dev/null || echo "")
+          if [ -n "$BUCKET" ]; then
+            echo "Emptying S3 bucket: $BUCKET"
+            aws s3 rm s3://$BUCKET --recursive || true
+          fi
+
+      - name: Terraform Destroy
+        if: steps.check-state.outputs.exists == 'true'
+        working-directory: terraform/service
+        run: |
+          terraform destroy -auto-approve \
+            -var="environment=dev" \
+            -var="function_name=passion-api-pr-${{ env.PR_NUMBER }}" \
+            -var="nimrobo_api_key=placeholder" \
+            -var="custom_domain_enabled=false"
+
+      - name: Delete terraform state
+        if: steps.check-state.outputs.exists == 'true'
+        run: |
+          # Delete the state file from S3
+          aws s3 rm s3://${{ secrets.TF_STATE_BUCKET }}/passion/service/pr-${{ env.PR_NUMBER }}/terraform.tfstate || true
+          aws s3 rm s3://${{ secrets.TF_STATE_BUCKET }}/passion/service/pr-${{ env.PR_NUMBER }}/ --recursive || true
+
+      - name: Comment PR with cleanup status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const wasCleanedUp = '${{ steps.check-state.outputs.exists }}' === 'true';
+
+            const body = wasCleanedUp
+              ? `## Environment Cleaned Up
+
+              PR #${{ env.PR_NUMBER }} environment has been destroyed.
+
+              All AWS resources (Lambda, S3, CloudFront, API Gateway) have been removed.
+
+              > Cleaned up: ${new Date().toISOString()}`
+              : `## No Environment Found
+
+              No deployment environment was found for PR #${{ env.PR_NUMBER }}.
+
+              > Checked: ${new Date().toISOString()}`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ env.PR_NUMBER }},
+              body
+            });
