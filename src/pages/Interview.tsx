@@ -3,7 +3,8 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { FloatingOrbs } from '@/components/ui/FloatingOrbs';
 import { InterviewStart } from '@/components/interview/InterviewStart';
 import { InterviewWaiting } from '@/components/interview/InterviewWaiting';
-import { supabase } from '@/integrations/supabase/client';
+import { auth } from '@/lib/auth';
+import { api } from '@/lib/api';
 import { analyzeTranscript } from '@/lib/analysis';
 import { assignUserToClusters } from '@/lib/clustering';
 import { toast } from 'sonner';
@@ -21,7 +22,7 @@ const Interview = () => {
   const [pollingStatus, setPollingStatus] = useState<string>('');
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    auth.getSession().then(({ data: { session } }) => {
       if (!session) navigate('/auth?niche=' + encodeURIComponent(niche));
       else setUserId(session.user.id);
     });
@@ -55,15 +56,14 @@ const Interview = () => {
     
     const traits = analyzeTranscript(textTranscript, niche);
     console.log('Analyzed traits:', traits);
-    
-    const { error: traitsError } = await supabase.from('traits').upsert([{
-      user_id: userId,
-      big5: JSON.parse(JSON.stringify(traits.big5)),
+
+    const { error: traitsError } = await api.upsertTraits({
+      big5: traits.big5,
       passion_score: traits.passionScore,
       archetype: traits.archetype,
       tags: traits.tags,
       deep_hooks: traits.deepHooks,
-    }], { onConflict: 'user_id' });
+    });
 
     if (traitsError) {
       console.error('Failed to save traits:', traitsError);
@@ -76,20 +76,16 @@ const Interview = () => {
     } catch (clusterError) {
       console.error('Clustering error (non-fatal):', clusterError);
     }
-    
+
     // Update session status to analyzed
-    await supabase
-      .from('sessions')
-      .update({ status: 'analyzed' })
-      .eq('user_id', userId)
-      .eq('status', 'completed');
-    
+    await api.updateSession({ status: 'analyzed' });
+
     navigate('/results');
   }, [userId, niche, navigate]);
 
   const checkInterviewStatus = useCallback(async () => {
     try {
-      const { data, error } = await supabase.functions.invoke('check-interview-status');
+      const { data, error } = await api.checkInterviewStatus();
 
       if (error) {
         console.error('Status check error:', error);
@@ -142,22 +138,20 @@ const Interview = () => {
 
   const handleStart = async () => {
     if (!userId) return;
-    
+
     try {
-      const { data, error } = await supabase.functions.invoke('start-interview', {
-        body: { niche }
-      });
+      const { data, error } = await api.startInterview(niche);
 
       if (error) throw error;
 
       if (data?.session_url) {
         setSessionUrl(data.session_url);
         setIsPolling(true);
-        
+
         // Move to waiting stage first, then let the user click to open
         // This is more reliable across browsers (Brave, Safari, etc.)
         setStage('waiting');
-        
+
         // Try to open automatically, but don't rely on it
         // Some browsers block window.open after async calls
         const newWindow = window.open(data.session_url, '_blank', 'noopener,noreferrer');

@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FloatingOrbs } from '@/components/ui/FloatingOrbs';
 import { PassionCard } from '@/components/results/PassionCard';
-import { supabase } from '@/integrations/supabase/client';
+import { auth } from '@/lib/auth';
+import { api } from '@/lib/api';
 import { TraitAnalysis, Profile } from '@/lib/types';
 import { Loader2 } from 'lucide-react';
 
@@ -14,21 +15,21 @@ const Results = () => {
 
   useEffect(() => {
     const fetchData = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await auth.getSession();
       if (!session) { navigate('/'); return; }
 
       const [profileRes, traitsRes] = await Promise.all([
-        supabase.from('profiles').select('*').eq('id', session.user.id).single(),
-        supabase.from('traits').select('*').eq('user_id', session.user.id).single(),
+        api.getProfile(session.user.id),
+        api.getTraits(session.user.id),
       ]);
 
       if (profileRes.data) setProfile(profileRes.data as Profile);
       if (traitsRes.data) {
         const t = traitsRes.data;
         setTraits({
-          big5: t.big5 as any,
+          big5: t.big5 as TraitAnalysis['big5'],
           passionScore: t.passion_score,
-          archetype: t.archetype as any,
+          archetype: t.archetype as TraitAnalysis['archetype'],
           tags: t.tags || [],
           deepHooks: t.deep_hooks || [],
         });

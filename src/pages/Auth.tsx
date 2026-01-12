@@ -2,7 +2,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
 import { FloatingOrbs } from '@/components/ui/FloatingOrbs';
 import { AuthForm } from '@/components/auth/AuthForm';
-import { supabase } from '@/integrations/supabase/client';
+import { auth } from '@/lib/auth';
 
 const Auth = () => {
   const [searchParams] = useSearchParams();
@@ -10,7 +10,7 @@ const Auth = () => {
   const niche = searchParams.get('niche') || 'your passion';
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = auth.onAuthStateChange((event, session) => {
       if (session) {
         navigate('/interview?niche=' + encodeURIComponent(niche));
       }

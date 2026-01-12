@@ -2,9 +2,9 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { RoomSidebar } from '@/components/rooms/RoomSidebar';
 import { ChatRoom } from '@/components/rooms/ChatRoom';
-import { supabase } from '@/integrations/supabase/client';
+import { auth } from '@/lib/auth';
+import { api } from '@/lib/api';
 import { Room } from '@/lib/types';
-import { getUserRooms } from '@/lib/clustering';
 import { Loader2, MessageSquare } from 'lucide-react';
 
 const Rooms = () => {
@@ -17,22 +17,20 @@ const Rooms = () => {
 
   useEffect(() => {
     const fetchData = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await auth.getSession();
       if (!session) { navigate('/'); return; }
-      
+
       setUserId(session.user.id);
-      const userRooms = await getUserRooms(session.user.id);
-      setRooms(userRooms);
-      if (userRooms.length > 0) setSelectedRoom(userRooms[0]);
+      const { data: userRooms } = await api.getUserRooms();
+      if (userRooms) {
+        setRooms(userRooms);
+        if (userRooms.length > 0) setSelectedRoom(userRooms[0]);
+      }
 
       // Get deep hooks from user traits
-      const { data: traitsData } = await supabase
-        .from('traits')
-        .select('deep_hooks')
-        .eq('user_id', session.user.id)
-        .single();
+      const { data: traitsData } = await api.getTraits(session.user.id);
       if (traitsData?.deep_hooks) setDeepHooks(traitsData.deep_hooks);
-      
+
       setLoading(false);
     };
     fetchData();

@@ -4,7 +4,7 @@ import { Mail, Lock, User, ArrowRight, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { supabase } from '@/integrations/supabase/client';
+import { auth } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 
 interface AuthFormProps {
@@ -26,17 +26,16 @@ export function AuthForm({ niche, onSuccess }: AuthFormProps) {
 
     try {
       if (isLogin) {
-        const { error } = await supabase.auth.signInWithPassword({
+        const { error } = await auth.signInWithPassword({
           email,
           password,
         });
         if (error) throw error;
       } else {
-        const { data, error } = await supabase.auth.signUp({
+        const { error } = await auth.signUp({
           email,
           password,
           options: {
-            emailRedirectTo: `${window.location.origin}/`,
             data: {
               display_name: displayName,
               niche_interest: niche,
@@ -44,28 +43,13 @@ export function AuthForm({ niche, onSuccess }: AuthFormProps) {
           },
         });
         if (error) throw error;
-
-        if (data.user) {
-          // Create profile
-          const { error: profileError } = await supabase
-            .from('profiles')
-            .insert({
-              id: data.user.id,
-              display_name: displayName,
-              niche_interest: niche,
-            });
-
-          if (profileError) {
-            console.error('Profile creation error:', profileError);
-          }
-        }
       }
 
       onSuccess();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: 'Error',
-        description: error.message || 'Something went wrong',
+        description: error instanceof Error ? error.message : 'Something went wrong',
         variant: 'destructive',
       });
     } finally {

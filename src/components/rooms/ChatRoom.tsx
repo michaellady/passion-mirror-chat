@@ -1,11 +1,13 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, Sparkles, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { supabase } from '@/integrations/supabase/client';
-import { Room, Message, Profile } from '@/lib/types';
+import { api, Message, Profile } from '@/lib/api';
+import { Room } from '@/lib/types';
 import { formatDistanceToNow } from 'date-fns';
+
+const POLL_INTERVAL = 3000; // 3 seconds
 
 interface ChatRoomProps {
   room: Room;
@@ -14,85 +16,59 @@ interface ChatRoomProps {
 }
 
 export function ChatRoom({ room, userId, deepHooks = [] }: ChatRoomProps) {
-  const [messages, setMessages] = useState<(Message & { profile?: Profile })[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [profiles, setProfiles] = useState<Record<string, Profile>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const lastMessageIdRef = useRef<string | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  useEffect(() => {
-    // Fetch existing messages
-    const fetchMessages = async () => {
-      const { data } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('room_id', room.id)
-        .order('created_at', { ascending: true });
-      
-      if (data) {
-        setMessages(data as Message[]);
-        
+  const fetchMessages = useCallback(async () => {
+    const { data } = await api.getMessages(room.id);
+
+    if (data) {
+      // Check if we have new messages
+      const newLastId = data.length > 0 ? data[data.length - 1].id : null;
+      if (newLastId !== lastMessageIdRef.current) {
+        setMessages(data);
+        lastMessageIdRef.current = newLastId;
+
         // Fetch profiles for message authors
-        const userIds = [...new Set(data.map(m => m.user_id))];
-        if (userIds.length > 0) {
-          const { data: profileData } = await supabase
-            .from('profiles')
-            .select('*')
-            .in('id', userIds);
-          
+        const userIds = [...new Set(data.map((m) => m.user_id))];
+        const missingIds = userIds.filter((id) => !profiles[id]);
+
+        if (missingIds.length > 0) {
+          const { data: profileData } = await api.getProfiles(missingIds);
           if (profileData) {
-            const profileMap: Record<string, Profile> = {};
-            profileData.forEach(p => {
-              profileMap[p.id] = p as Profile;
+            const profileMap: Record<string, Profile> = { ...profiles };
+            profileData.forEach((p) => {
+              profileMap[p.id] = p;
             });
             setProfiles(profileMap);
           }
         }
       }
-    };
+    }
+  }, [room.id, profiles]);
 
+  // Initial fetch and polling
+  useEffect(() => {
+    // Reset state when room changes
+    setMessages([]);
+    lastMessageIdRef.current = null;
+
+    // Initial fetch
     fetchMessages();
 
-    // Subscribe to new messages
-    const channel = supabase
-      .channel(`room:${room.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `room_id=eq.${room.id}`,
-        },
-        async (payload) => {
-          const newMsg = payload.new as Message;
-          
-          // Fetch profile if not cached
-          if (!profiles[newMsg.user_id]) {
-            const { data: profileData } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', newMsg.user_id)
-              .single();
-            
-            if (profileData) {
-              setProfiles(prev => ({ ...prev, [newMsg.user_id]: profileData as Profile }));
-            }
-          }
-          
-          setMessages(prev => [...prev, newMsg]);
-        }
-      )
-      .subscribe();
+    // Set up polling
+    const intervalId = setInterval(fetchMessages, POLL_INTERVAL);
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [room.id]);
+    return () => clearInterval(intervalId);
+  }, [room.id, fetchMessages]);
 
   useEffect(() => {
     scrollToBottom();
@@ -102,15 +78,11 @@ export function ChatRoom({ room, userId, deepHooks = [] }: ChatRoomProps) {
     if (!newMessage.trim() || sending) return;
 
     setSending(true);
-    const { error } = await supabase
-      .from('messages')
-      .insert({
-        room_id: room.id,
-        user_id: userId,
-        content: newMessage.trim(),
-      });
+    const { data, error } = await api.sendMessage(room.id, newMessage.trim());
 
-    if (!error) {
+    if (!error && data) {
+      // Add the new message immediately for responsiveness
+      setMessages((prev) => [...prev, data]);
       setNewMessage('');
     }
     setSending(false);
@@ -165,7 +137,7 @@ export function ChatRoom({ room, userId, deepHooks = [] }: ChatRoomProps) {
           {messages.map((message) => {
             const profile = profiles[message.user_id];
             const isOwn = message.user_id === userId;
-            
+
             return (
               <motion.div
                 key={message.id}

@@ -1,0 +1,24 @@
+{
+  "name": "passion-lambda",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --outfile=dist/index.mjs --format=esm --external:pg-native",
+    "package": "cd dist && zip -r ../bootstrap.zip ."
+  },
+  "dependencies": {
+    "pg": "^8.11.3",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "@aws-sdk/client-secrets-manager": "^3.490.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/pg": "^8.10.9",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.5",
+    "@types/aws-lambda": "^8.10.131",
+    "esbuild": "^0.19.11",
+    "typescript": "^5.3.3"
+  }
+}
