@@ -45,27 +45,27 @@ export function estimateBig5(transcript: string): Big5 {
   
   // Openness indicators
   const opennessWords = ['curious', 'creative', 'imagine', 'explore', 'discover', 'new', 'different', 'unique'];
-  let openness = 50 + opennessWords.reduce((acc, word) => 
+  const openness = 50 + opennessWords.reduce((acc, word) =>
     acc + (lowerTranscript.match(new RegExp(word, 'gi')) || []).length * 5, 0);
-  
+
   // Conscientiousness indicators
   const conscientiousnessWords = ['careful', 'organized', 'detail', 'plan', 'practice', 'learn', 'study', 'research'];
-  let conscientiousness = 50 + conscientiousnessWords.reduce((acc, word) => 
+  const conscientiousness = 50 + conscientiousnessWords.reduce((acc, word) =>
     acc + (lowerTranscript.match(new RegExp(word, 'gi')) || []).length * 5, 0);
-  
+
   // Extraversion indicators
   const extraversionWords = ['people', 'friends', 'community', 'share', 'together', 'social', 'group', 'meet'];
-  let extraversion = 50 + extraversionWords.reduce((acc, word) => 
+  const extraversion = 50 + extraversionWords.reduce((acc, word) =>
     acc + (lowerTranscript.match(new RegExp(word, 'gi')) || []).length * 5, 0);
-  
+
   // Agreeableness indicators
   const agreeablenessWords = ['help', 'care', 'kind', 'support', 'understand', 'appreciate', 'grateful', 'love'];
-  let agreeableness = 50 + agreeablenessWords.reduce((acc, word) => 
+  const agreeableness = 50 + agreeablenessWords.reduce((acc, word) =>
     acc + (lowerTranscript.match(new RegExp(word, 'gi')) || []).length * 5, 0);
-  
+
   // Neuroticism indicators (inverse scoring)
   const neuroticismWords = ['worry', 'stress', 'anxious', 'nervous', 'afraid', 'scared'];
-  let neuroticism = 30 + neuroticismWords.reduce((acc, word) => 
+  const neuroticism = 30 + neuroticismWords.reduce((acc, word) =>
     acc + (lowerTranscript.match(new RegExp(word, 'gi')) || []).length * 8, 0);
   
   return {

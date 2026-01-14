@@ -1,7 +1,7 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, Page, Route } from '@playwright/test';
 
 // Helper to set up authenticated session
-async function setupAuthenticatedSession(page: any) {
+async function setupAuthenticatedSession(page: Page) {
   // Set auth tokens in localStorage before navigating
   await page.addInitScript(() => {
     localStorage.setItem('passion_auth_token', 'mock-jwt-token');
@@ -18,7 +18,7 @@ async function setupAuthenticatedSession(page: any) {
   });
 
   // Mock session verification
-  await page.route('**/auth/session', async (route: any) => {
+  await page.route('**/auth/session', async (route: Route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',

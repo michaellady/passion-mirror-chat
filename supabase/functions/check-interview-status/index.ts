@@ -46,13 +46,18 @@ async function fetchTranscript(baseUrl: string, apiKey: string, sessionId: strin
   });
 }
 
+interface TranscriptEntry {
+  role?: string;
+  content?: string;
+}
+
 function normalizeTranscript(transcript: unknown): string | null {
   if (!transcript) return null;
   if (typeof transcript === 'string') return transcript;
   if (Array.isArray(transcript)) {
     return transcript
-      .filter((e: any) => e?.role && e?.content)
-      .map((e: any) => `${e.role}: ${e.content}`)
+      .filter((e: TranscriptEntry) => e?.role && e?.content)
+      .map((e: TranscriptEntry) => `${e.role}: ${e.content}`)
       .join('\n');
   }
   return JSON.stringify(transcript);
@@ -123,7 +128,14 @@ serve(async (req) => {
     console.log(`Found ${linksData.links?.length || 0} instant voice links`);
 
     // Find the matching link by id or token
-    const matchingLink = linksData.links?.find((link: any) => 
+    interface NimroboLink {
+      id: string;
+      token: string;
+      status: string;
+      sessionId?: string;
+      lastSessionId?: string;
+    }
+    const matchingLink = linksData.links?.find((link: NimroboLink) =>
       link.id === storedLinkId || link.token === linkToken || link.token === storedLinkId
     );
 
@@ -177,7 +189,11 @@ serve(async (req) => {
 
     console.log('Link is used, trying session IDs:', candidateSessionIds);
 
-    let statusData: any | null = null;
+    interface SessionStatus {
+      status: string;
+      completedAt?: string;
+    }
+    let statusData: SessionStatus | null = null;
     let usedSessionId: string | null = null;
 
     for (const candidate of candidateSessionIds) {
