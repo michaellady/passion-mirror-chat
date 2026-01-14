@@ -13,9 +13,9 @@ jobs:
   cleanup:
     name: Cleanup PR Environment
     runs-on: ubuntu-latest
+    environment: dev
     permissions:
       contents: read
-      id-token: write
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
@@ -23,8 +23,9 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -33,17 +34,15 @@ jobs:
           terraform_wrapper: false
 
       - name: Terraform Init
-        working-directory: terraform/service
+        working-directory: terraform/pr-frontend
         run: |
           terraform init \
-            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="key=passion/service/pr-${{ env.PR_NUMBER }}/terraform.tfstate" \
-            -backend-config="region=${{ env.AWS_REGION }}" \
-            -backend-config="dynamodb_table=${{ secrets.TF_LOCK_TABLE }}"
+            -backend-config=../backend-dev.hcl \
+            -backend-config="key=pr-frontend/pr-${{ env.PR_NUMBER }}/terraform.tfstate"
 
       - name: Check if state exists
         id: check-state
-        working-directory: terraform/service
+        working-directory: terraform/pr-frontend
         run: |
           # Try to list resources - if no state, this will be empty
           RESOURCES=$(terraform state list 2>/dev/null || echo "")
@@ -57,7 +56,7 @@ jobs:
 
       - name: Empty S3 bucket before destroy
         if: steps.check-state.outputs.exists == 'true'
-        working-directory: terraform/service
+        working-directory: terraform/pr-frontend
         run: |
           # Get bucket name from state
           BUCKET=$(terraform output -raw s3_bucket_name 2>/dev/null || echo "")
@@ -68,20 +67,18 @@ jobs:
 
       - name: Terraform Destroy
         if: steps.check-state.outputs.exists == 'true'
-        working-directory: terraform/service
+        working-directory: terraform/pr-frontend
         run: |
           terraform destroy -auto-approve \
-            -var="environment=dev" \
-            -var="function_name=passion-api-pr-${{ env.PR_NUMBER }}" \
-            -var="nimrobo_api_key=placeholder" \
-            -var="custom_domain_enabled=false"
+            -var="pr_number=${{ env.PR_NUMBER }}" \
+            -var="environment=dev"
 
       - name: Delete terraform state
         if: steps.check-state.outputs.exists == 'true'
         run: |
           # Delete the state file from S3
-          aws s3 rm s3://${{ secrets.TF_STATE_BUCKET }}/passion/service/pr-${{ env.PR_NUMBER }}/terraform.tfstate || true
-          aws s3 rm s3://${{ secrets.TF_STATE_BUCKET }}/passion/service/pr-${{ env.PR_NUMBER }}/ --recursive || true
+          aws s3 rm s3://passion-tf-state-dev-539402214167/pr-frontend/pr-${{ env.PR_NUMBER }}/terraform.tfstate || true
+          aws s3 rm s3://passion-tf-state-dev-539402214167/pr-frontend/pr-${{ env.PR_NUMBER }}/ --recursive || true
 
       - name: Comment PR with cleanup status
         uses: actions/github-script@v7
@@ -94,7 +91,7 @@ jobs:
 
               PR #${{ env.PR_NUMBER }} environment has been destroyed.
 
-              All AWS resources (Lambda, S3, CloudFront, API Gateway) have been removed.
+              All AWS resources (S3, CloudFront) have been removed.
 
               > Cleaned up: ${new Date().toISOString()}`
               : `## No Environment Found
