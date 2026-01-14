@@ -34,15 +34,15 @@ jobs:
           terraform_wrapper: false
 
       - name: Terraform Init
-        working-directory: terraform/service
+        working-directory: terraform/pr-frontend
         run: |
           terraform init \
             -backend-config=../backend-dev.hcl \
-            -backend-config="key=service/pr-${{ env.PR_NUMBER }}/terraform.tfstate"
+            -backend-config="key=pr-frontend/pr-${{ env.PR_NUMBER }}/terraform.tfstate"
 
       - name: Check if state exists
         id: check-state
-        working-directory: terraform/service
+        working-directory: terraform/pr-frontend
         run: |
           # Try to list resources - if no state, this will be empty
           RESOURCES=$(terraform state list 2>/dev/null || echo "")
@@ -56,7 +56,7 @@ jobs:
 
       - name: Empty S3 bucket before destroy
         if: steps.check-state.outputs.exists == 'true'
-        working-directory: terraform/service
+        working-directory: terraform/pr-frontend
         run: |
           # Get bucket name from state
           BUCKET=$(terraform output -raw s3_bucket_name 2>/dev/null || echo "")
@@ -67,20 +67,18 @@ jobs:
 
       - name: Terraform Destroy
         if: steps.check-state.outputs.exists == 'true'
-        working-directory: terraform/service
+        working-directory: terraform/pr-frontend
         run: |
           terraform destroy -auto-approve \
-            -var="environment=dev" \
-            -var="function_name=passion-api-pr-${{ env.PR_NUMBER }}" \
-            -var="nimrobo_api_key=placeholder" \
-            -var="custom_domain_enabled=false"
+            -var="pr_number=${{ env.PR_NUMBER }}" \
+            -var="environment=dev"
 
       - name: Delete terraform state
         if: steps.check-state.outputs.exists == 'true'
         run: |
           # Delete the state file from S3
-          aws s3 rm s3://passion-tf-state-dev-539402214167/service/pr-${{ env.PR_NUMBER }}/terraform.tfstate || true
-          aws s3 rm s3://passion-tf-state-dev-539402214167/service/pr-${{ env.PR_NUMBER }}/ --recursive || true
+          aws s3 rm s3://passion-tf-state-dev-539402214167/pr-frontend/pr-${{ env.PR_NUMBER }}/terraform.tfstate || true
+          aws s3 rm s3://passion-tf-state-dev-539402214167/pr-frontend/pr-${{ env.PR_NUMBER }}/ --recursive || true
 
       - name: Comment PR with cleanup status
         uses: actions/github-script@v7
@@ -93,7 +91,7 @@ jobs:
 
               PR #${{ env.PR_NUMBER }} environment has been destroyed.
 
-              All AWS resources (Lambda, S3, CloudFront, API Gateway) have been removed.
+              All AWS resources (S3, CloudFront) have been removed.
 
               > Cleaned up: ${new Date().toISOString()}`
               : `## No Environment Found
