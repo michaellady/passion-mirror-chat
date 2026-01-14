@@ -54,7 +54,7 @@ jobs:
       frontend_url: ${{ steps.deploy.outputs.frontend_url }}
       api_url: ${{ steps.deploy.outputs.api_url }}
     environment:
-      name: pr-${{ github.event.pull_request.number }}
+      name: dev
       url: ${{ steps.deploy.outputs.frontend_url }}
     permissions:
       contents: read
