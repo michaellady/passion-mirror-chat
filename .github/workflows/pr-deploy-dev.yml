@@ -50,6 +50,9 @@ jobs:
     name: Deploy PR Environment
     needs: build
     runs-on: ubuntu-latest
+    outputs:
+      frontend_url: ${{ steps.deploy.outputs.frontend_url }}
+      api_url: ${{ steps.deploy.outputs.api_url }}
     environment:
       name: pr-${{ github.event.pull_request.number }}
       url: ${{ steps.deploy.outputs.frontend_url }}
@@ -172,6 +175,96 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: ${{ env.PR_NUMBER }},
+                body
+              });
+            }
+
+  deployed-e2e:
+    name: E2E Tests (Deployed)
+    needs: deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Wait for CloudFront propagation
+        run: |
+          echo "Waiting 30s for CloudFront cache invalidation to propagate..."
+          sleep 30
+
+      - name: Run E2E tests against deployed environment
+        env:
+          TEST_URL: ${{ needs.deploy.outputs.frontend_url }}
+        run: |
+          echo "Running E2E tests against: $TEST_URL"
+          npm run test:e2e -- --project=chromium
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-pr-${{ github.event.pull_request.number }}
+          path: playwright-report/
+          retention-days: 7
+
+      - name: Comment PR with test results
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const testUrl = '${{ needs.deploy.outputs.frontend_url }}';
+            const status = '${{ job.status }}';
+            const emoji = status === 'success' ? '✅' : '❌';
+
+            const body = `## ${emoji} E2E Test Results
+
+            | Status | Environment |
+            |--------|-------------|
+            | ${status.toUpperCase()} | ${testUrl} |
+
+            ${status === 'success'
+              ? 'All E2E tests passed against the deployed environment.'
+              : 'Some E2E tests failed. Check the workflow logs and Playwright report artifact for details.'}
+
+            > Tested at: ${new Date().toISOString()}`;
+
+            // Find existing test comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('## ') && c.body.includes('E2E Test Results')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
                 body
               });
             }
