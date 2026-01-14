@@ -79,8 +79,8 @@ jobs:
         if: steps.check-state.outputs.exists == 'true'
         run: |
           # Delete the state file from S3
-          aws s3 rm s3://passion-terraform-state-dev/service/pr-${{ env.PR_NUMBER }}/terraform.tfstate || true
-          aws s3 rm s3://passion-terraform-state-dev/service/pr-${{ env.PR_NUMBER }}/ --recursive || true
+          aws s3 rm s3://passion-tf-state-dev-539402214167/service/pr-${{ env.PR_NUMBER }}/terraform.tfstate || true
+          aws s3 rm s3://passion-tf-state-dev-539402214167/service/pr-${{ env.PR_NUMBER }}/ --recursive || true
 
       - name: Comment PR with cleanup status
         uses: actions/github-script@v7
